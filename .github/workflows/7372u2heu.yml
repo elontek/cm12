@@ -1,0 +1,44 @@
+name: Build TWRP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Paketleri kur
+        run: |
+          sudo apt update
+          sudo apt install -y git curl repo bc bison build-essential zip flex g++-multilib gcc-multilib \
+            gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
+            lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+
+      - name: Repo kur
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod +x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: TWRP source çek
+        run: |
+          mkdir twrp
+          cd twrp
+          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp -b twrp-12.1
+          repo sync -j4
+
+      - name: Z2 device tree çek
+        run: |
+          cd twrp/device/sony
+          git clone DEVICE_TREE_ADRESI sirius
+
+      - name: Derle
+        run: |
+          cd twrp
+          source build/envsetup.sh
+          lunch twrp_sirius-eng
+          mka recoveryimage

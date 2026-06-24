@@ -1,21 +1,25 @@
-name: Build TWRP
+name: Build CM12 Mini2
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
+    timeout-minutes: 360
 
     steps:
+
       - name: Paketleri kur
         run: |
           sudo apt update
-          sudo apt install -y git curl bc bison build-essential zip flex g++-multilib gcc-multilib \
-            gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev \
-            lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev \
-            libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
-            schedtool squashfs-tools xsltproc zlib1g-dev python3
+          sudo apt install -y \
+            git curl bc bison build-essential zip flex \
+            g++-multilib gcc-multilib gnupg gperf \
+            imagemagick lib32ncurses5-dev lib32z1-dev \
+            libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc \
+            openjdk-7-jdk python3
 
       - name: Repo kur
         run: |
@@ -24,22 +28,51 @@ jobs:
           chmod +x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: TWRP source çek
+      - name: CM12 source çek
         run: |
-          mkdir twrp
-          cd twrp
-          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git -b twrp-9.0
+          mkdir cm12
+          cd cm12
+          repo init -u https://github.com/CyanogenMod/android.git -b cm-12.0
           repo sync -j4
 
-      - name: Z2 device tree çek
+      - name: Mini 2 device tree
         run: |
-          mkdir -p twrp/device/sony
-          cd twrp/device/sony
-          git clone -b sirius https://github.com/ShadowElite117/android_sony_shinano_twrp.git sirius
+          cd cm12
 
-      - name: Derle
+          mkdir -p device/samsung
+
+          git clone https://github.com/TheWhisp/android_device_samsung_jena.git \
+          device/samsung/jena
+
+          git clone https://github.com/TheWhisp/android_device_samsung_msm7x27a-common.git \
+          device/samsung/msm7x27a-common
+
+          mkdir -p kernel/samsung
+
+          git clone https://github.com/TheWhisp/android_kernel_samsung_msm7x27a.git \
+          kernel/samsung/msm7x27a
+
+      - name: Vendor çek
         run: |
-          cd twrp
+          cd cm12
+
+          git clone https://github.com/TheWhisp/android_vendor_samsung_jena.git \
+          vendor/samsung/jena || true
+
+      - name: Build
+        run: |
+          cd cm12
+
+          export USE_CCACHE=1
+
           source build/envsetup.sh
-          lunch omni_sirius-eng
-          mka recoveryimage
+
+          lunch cm_jena-userdebug
+
+          mka bacon
+
+      - name: ROM upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: CM12-Mini2
+          path: cm12/out/target/product/jena/*.zip

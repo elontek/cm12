@@ -18,7 +18,7 @@ jobs:
 
       - name: Clone Kernel Source
         run: |
-          git clone --depth=1 https://github.com/J0SH1X/android_kernel_samsung_smdk4412.git kernel
+          git clone --depth=1 https://github.com/J0SH1X/android_kernel_samsung_smdk4412/tree/lineage-23.0-bpf.git kernel
 
       - name: Download ARM GCC 4.9
         run: |

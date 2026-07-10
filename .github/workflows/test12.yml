@@ -41,12 +41,6 @@ jobs:
 
           make -C kernel O=../out lineage_trelteskt_defconfig
 
-      - name: Fix missing bcmdhd4358_100
-        run: |
-          mkdir -p kernel/drivers/net/wireless/bcmdhd4358_100
-          touch kernel/drivers/net/wireless/bcmdhd4358_100/Makefile
-          echo "Created dummy bcmdhd4358_100 Makefile"
-
       - name: Disable missing bcmdhd4358_100
         run: |
           sed -i '/CONFIG_BCMDHD4358_100/d' out/.config
@@ -58,11 +52,11 @@ jobs:
         run: |
           mkdir -p kernel/drivers/net/wireless/bcmdhd4358_100
           touch kernel/drivers/net/wireless/bcmdhd4358_100/Makefile
-          sed -i '/bcmdhd4358_100/d' kernel/drivers/net/wireless/Makefile
 
           mkdir -p kernel/drivers/sensorhub/brcm/factory
+          mkdir -p out/drivers/sensorhub/brcm/factory
 
-          echo "Fixed missing driver directories"
+          echo "Missing driver directories created"
 
       - name: Build kernel
         run: |
@@ -74,12 +68,17 @@ jobs:
           sed -i '/CONFIG_BCMDHD4358_100/d' out/.config
           echo "# CONFIG_BCMDHD4358_100 is not set" >> out/.config
 
-          make -C kernel O=../out -j$(nproc) 2>&1 | tee build.log
+          make -C kernel O=../out -j1 V=1 2>&1 | tee build.log
 
       - name: Show build errors
         if: always()
         run: |
           grep -iE "error:|fatal:|No such|undefined|Error" build.log | tail -50 || true
+
+      - name: Check zImage
+        if: always()
+        run: |
+          ls -lh out/arch/arm/boot/ || true
 
       - name: Upload zImage
         uses: actions/upload-artifact@v4

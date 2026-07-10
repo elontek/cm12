@@ -1,0 +1,65 @@
+name: Build universal5433 Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout empty repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            bc \
+            bison \
+            flex \
+            build-essential \
+            libssl-dev \
+            libncurses5-dev \
+            gcc-arm-linux-gnueabi \
+            python3
+
+      - name: Clone kernel source
+        run: |
+          git clone --depth=1 \
+            -b lineage-20.0 \
+            https://github.com/TouseefX/android_kernel_samsung_universal5433.git kernel
+
+      - name: Prepare output
+        run: |
+          mkdir -p out
+
+      - name: Configure kernel
+        run: |
+          export ARCH=arm
+          export CROSS_COMPILE=arm-linux-gnueabi-
+
+          cd kernel
+
+          make O=../out lineage_trelteskt_defconfig
+
+      - name: Disable missing bcmdhd4358_100
+        run: |
+          sed -i '/CONFIG_BCMDHD4358_100/d' out/.config
+          echo "# CONFIG_BCMDHD4358_100 is not set" >> out/.config
+
+          grep BCMDHD out/.config || true
+
+      - name: Build kernel
+        run: |
+          export ARCH=arm
+          export CROSS_COMPILE=arm-linux-gnueabi-
+
+          make -C kernel O=../out olddefconfig
+          make -C kernel O=../out -j$(nproc)
+
+      - name: Upload zImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: universal5433-zImage
+          path: out/arch/arm/boot/zImage

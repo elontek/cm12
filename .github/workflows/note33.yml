@@ -48,7 +48,7 @@ jobs:
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
 
-          make -C kernel O=../out olddefconfig
+          make -C kernel O=../out oldconfig
 
           make -C kernel O=../out -j2 V=1 2>&1 | tee build.log
 

@@ -1,0 +1,42 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          bc \
+          bison \
+          flex \
+          libssl-dev \
+          libelf-dev \
+          gcc-arm-linux-gnueabi \
+          make \
+          git
+
+    - name: Clone kernel
+      run: |
+        git clone --depth=1 \
+        -b lineage-21.0 \
+        https://github.com/retiredcrave/android_kernel_samsung_exynos5420.git kernel
+
+    - name: Build kernel
+      run: |
+        export ARCH=arm
+        export CROSS_COMPILE=arm-linux-gnueabi-
+
+        cd kernel
+
+        make lineageos_ha3g_defconfig
+
+        make -j$(nproc) zImage

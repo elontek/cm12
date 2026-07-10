@@ -25,6 +25,12 @@ jobs:
         run: |
           git clone --depth=1 -b lineage-23.0 https://github.com/J0SH1X/android_kernel_samsung_exynos5420.git kernel
 
+      - name: Fix GCC11 header
+        run: |
+          cat > kernel/include/linux/compiler-gcc11.h <<'EOF'
+          #include "compiler-gcc5.h"
+          EOF
+
       - name: Build kernel
         run: |
           cd kernel

@@ -1,0 +1,83 @@
+name: Build Samsung Exynos5420 Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git bc bison flex build-essential \
+            libssl-dev libelf-dev \
+            libncurses5-dev libncursesw5-dev \
+            gcc-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf \
+            device-tree-compiler \
+            cpio unzip zip python3
+
+      - name: Clone kernel
+        run: |
+          git clone --depth=1 -b lineage-23.1 https://github.com/exynos5420-legacy/android_kernel_samsung_exynos5420.git kernel
+
+      - name: GCC11 compatibility
+        run: |
+          if [ ! -f kernel/include/linux/compiler-gcc11.h ]; then
+            echo '#include "compiler-gcc5.h"' > kernel/include/linux/compiler-gcc11.h
+          fi
+
+      - name: Build kernel
+        run: |
+          cd kernel
+
+          export ARCH=arm
+          export SUBARCH=arm
+          export CROSS_COMPILE=arm-linux-gnueabihf-
+
+          make lineageos_ha3g_defconfig
+
+          make \
+            HOSTCFLAGS="-Wno-error" \
+            KCFLAGS="-Wno-error" \
+            -j$(nproc)
+
+      - name: Upload zImage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zImage
+          path: kernel/arch/arm/boot/zImage
+
+      - name: Upload Image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image
+          path: kernel/arch/arm/boot/Image
+
+      - name: Upload DTBs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DTBs
+          path: |
+            kernel/arch/arm/boot/dts/**/*.dtb
+            kernel/arch/arm/boot/dts/*.dtb
+
+      - name: Upload modules
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Modules
+          path: kernel/**/*.ko
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BuildLog
+          path: kernel/.config

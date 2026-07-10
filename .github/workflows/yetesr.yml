@@ -54,6 +54,16 @@ jobs:
 
           grep BCMDHD out/.config || true
 
+      - name: Fix missing drivers
+        run: |
+          mkdir -p kernel/drivers/net/wireless/bcmdhd4358_100
+          touch kernel/drivers/net/wireless/bcmdhd4358_100/Makefile
+          sed -i '/bcmdhd4358_100/d' kernel/drivers/net/wireless/Makefile
+
+          mkdir -p kernel/drivers/sensorhub/brcm/factory
+
+          echo "Fixed missing driver directories"
+
       - name: Build kernel
         run: |
           export ARCH=arm

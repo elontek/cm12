@@ -40,7 +40,8 @@ jobs:
           export CROSS_COMPILE=arm-linux-gnueabihf-
 
           make lineageos_ha3g_defconfig
-          make -j$(nproc)
+
+          make KCFLAGS="-Wno-error=attributes" -j$(nproc)
 
       - name: Upload zImage
         uses: actions/upload-artifact@v4

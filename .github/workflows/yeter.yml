@@ -60,7 +60,16 @@ jobs:
           export CROSS_COMPILE=arm-linux-gnueabi-
 
           make -C kernel O=../out olddefconfig
-          make -C kernel O=../out -j$(nproc)
+
+          sed -i '/CONFIG_BCMDHD4358_100/d' out/.config
+          echo "# CONFIG_BCMDHD4358_100 is not set" >> out/.config
+
+          make -C kernel O=../out -j$(nproc) 2>&1 | tee build.log
+
+      - name: Show build errors
+        if: always()
+        run: |
+          grep -iE "error:|fatal:|No such|undefined|Error" build.log | tail -50 || true
 
       - name: Upload zImage
         uses: actions/upload-artifact@v4

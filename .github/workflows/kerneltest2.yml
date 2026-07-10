@@ -50,13 +50,19 @@ jobs:
 
           grep BCMDHD out/.config || true
 
+          - name: Fix missing bcmdhd4358_100
+            run: |
+             mkdir -p kernel/drivers/net/wireless/bcmdhd4358_100
+             touch kernel/drivers/net/wireless/bcmdhd4358_100/Makefile
+             echo "Created dummy bcmdhd4358_100 Makefile"
+
       - name: Build kernel
         run: |
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
 
-          make -C kernel O=../out olddefconfig
-          make -C kernel O=../out -j$(nproc)
+            make -C kernel O=../out olddefconfig
+            make -C kernel O=../out -j$(nproc)
 
       - name: Upload zImage
         uses: actions/upload-artifact@v4

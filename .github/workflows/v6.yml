@@ -1,0 +1,57 @@
+name: Build Samsung Exynos5420 Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git bc bison flex build-essential \
+            libssl-dev libelf-dev \
+            libncurses5-dev libncursesw5-dev \
+            gcc-arm-linux-gnueabihf \
+            binutils-arm-linux-gnueabihf \
+            device-tree-compiler \
+            cpio unzip zip python3
+
+      - name: Clone kernel
+        run: |
+          git clone --depth=1 -b lineage-23.0 https://github.com/J0SH1X/android_kernel_samsung_exynos5420.git kernel
+
+      - name: Build kernel
+        run: |
+          cd kernel
+
+          export ARCH=arm
+          export SUBARCH=arm
+          export CROSS_COMPILE=arm-linux-gnueabihf-
+
+          make lineageos_ha3g_defconfig
+          make -j$(nproc)
+
+      - name: Upload zImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: zImage
+          path: kernel/arch/arm/boot/zImage
+
+      - name: Upload DTBs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtb
+          path: kernel/arch/arm/boot/dts/**/*.dtb
+
+      - name: Upload modules
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: modules
+          path: |
+            kernel/**/*.ko

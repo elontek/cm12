@@ -1,0 +1,72 @@
+name: Build Samsung Exynos5420 Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Install packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          bc bison flex git zip unzip cpio \
+          build-essential libssl-dev \
+          libncurses5-dev libncursesw5-dev
+
+    - name: Clone kernel
+      run: |
+        git clone --depth=1 -b lineage-21.0-new \
+          https://github.com/salih4187/android_kernel_samsung_exynos5420.git kernel
+
+    - name: Download Android GCC 4.9
+      run: |
+        git clone --depth=1 \
+          https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-eabi-4.9 \
+          toolchain
+
+    - name: Prepare compiler header
+      run: |
+        if [ ! -f kernel/include/linux/compiler-gcc5.h ]; then
+          cp kernel/include/linux/compiler-gcc4.h kernel/include/linux/compiler-gcc5.h
+        fi
+
+        cat > kernel/include/linux/compiler-gcc11.h <<EOF
+        #include "compiler-gcc5.h"
+        EOF
+
+    - name: Build
+      run: |
+        export ARCH=arm
+        export SUBARCH=arm
+        export CROSS_COMPILE=$GITHUB_WORKSPACE/toolchain/bin/arm-eabi-
+
+        cd kernel
+
+        make lineageos_ha3g_defconfig
+
+        make -j$(nproc) \
+          KCFLAGS="-Wno-error" \
+          HOSTCFLAGS="-Wno-error"
+
+    - name: Upload zImage
+      uses: actions/upload-artifact@v4
+      with:
+        name: zImage
+        path: kernel/arch/arm/boot/zImage
+
+    - name: Upload dtb
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dtb
+        path: kernel/arch/arm/boot/dts/**/*.dtb
+
+    - name: Upload modules
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: modules
+        path: kernel/**/*.ko

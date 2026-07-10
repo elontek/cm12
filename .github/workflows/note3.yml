@@ -1,0 +1,64 @@
+name: note3
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            bc \
+            bison \
+            flex \
+            build-essential \
+            libssl-dev \
+            libncurses5-dev \
+            gcc-arm-linux-gnueabi \
+            python3 \
+            git
+
+      - name: Clone kernel
+        run: |
+          git clone --depth=1 \
+            -b lineage-21.0 \
+            https://github.com/retiredcrave/android_kernel_samsung_exynos5420.git kernel
+
+      - name: Prepare output
+        run: |
+          mkdir out
+
+      - name: Configure kernel
+        run: |
+          export ARCH=arm
+          export CROSS_COMPILE=arm-linux-gnueabi-
+
+          make -C kernel O=../out lineageos_ha3g_defconfig
+
+      - name: Build kernel
+        run: |
+          export ARCH=arm
+          export CROSS_COMPILE=arm-linux-gnueabi-
+
+          make -C kernel O=../out olddefconfig
+
+          make -C kernel O=../out -j2 V=1 2>&1 | tee build.log
+
+      - name: Show errors
+        if: always()
+        run: |
+          grep -iE "error:|fatal:|No such|undefined" build.log | tail -100 || true
+
+      - name: Upload zImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: exynos5420-zImage
+          path: out/arch/arm/boot/zImage

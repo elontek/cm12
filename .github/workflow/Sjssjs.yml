@@ -1,0 +1,132 @@
+name: Build OrangeFox - S7 Edge
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo apt-get clean
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git-core \
+            gnupg \
+            flex \
+            bison \
+            build-essential \
+            zip \
+            curl \
+            zlib1g-dev \
+            libc6-dev-i386 \
+            libncurses5 \
+            lib32ncurses5-dev \
+            x11proto-core-dev \
+            libx11-dev \
+            lib32z1-dev \
+            libgl1-mesa-dev \
+            libxml2-utils \
+            xsltproc \
+            unzip \
+            python3 \
+            python-is-python3 \
+            bc \
+            ccache \
+            rsync
+
+      - name: Install repo
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Initialize OrangeFox source
+        run: |
+          mkdir -p ~/orangefox
+          cd ~/orangefox
+
+          repo init \
+            --depth=1 \
+            -u https://gitlab.com/OrangeFox/Manifest.git \
+            -b fox_9.0
+
+      - name: Add hero2lte device tree
+        run: |
+          cd ~/orangefox
+
+          mkdir -p .repo/local_manifests
+
+          cat > .repo/local_manifests/hero2lte.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+
+            <remote
+              name="github"
+              fetch="https://github.com/" />
+
+            <project
+              name="OrangeFoxRecovery/device_samsung_hero2lte"
+              path="device/samsung/hero2lte"
+              remote="github"
+              revision="fox_9.0" />
+
+            <project
+              name="morogoku/android_kernel_samsung_universal8890"
+              path="kernel/samsung/universal8890"
+              remote="github"
+              revision="twrp" />
+
+          </manifest>
+          EOF
+
+      - name: Sync source
+        run: |
+          cd ~/orangefox
+
+          repo sync \
+            -c \
+            --no-clone-bundle \
+            --no-tags \
+            --optimized-fetch \
+            --prune \
+            --force-sync \
+            -j$(nproc --all)
+
+      - name: Build OrangeFox
+        run: |
+          cd ~/orangefox
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          source build/envsetup.sh
+
+          lunch omni_hero2lte-eng
+
+          mka recoveryimage -j$(nproc --all)
+
+      - name: Find output
+        run: |
+          cd ~/orangefox
+          find out/target/product/hero2lte -maxdepth 1 -type f \
+            \( -name "*.img" -o -name "*.zip" -o -name "*.tar" \) \
+            -print
+
+      - name: Upload recovery image
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-S7-Edge-hero2lte
+          path: |
+            ~/orangefox/out/target/product/hero2lte/recovery.img
+            ~/orangefox/out/target/product/hero2lte/*.zip
+            ~/orangefox/out/target/product/hero2lte/*.tar
+          if-no-files-found: warn

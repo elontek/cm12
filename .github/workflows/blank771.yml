@@ -1,0 +1,78 @@
+name: Build TWRP 3.7.1
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git-core \
+            gnupg \
+            flex \
+            bison \
+            build-essential \
+            zip \
+            curl \
+            zlib1g-dev \
+            gcc-multilib \
+            g++-multilib \
+            libc6-dev-i386 \
+            lib32ncurses5-dev \
+            x11proto-core-dev \
+            libx11-dev \
+            lib32z1-dev \
+            libxml2-utils \
+            xsltproc \
+            unzip \
+            fontconfig \
+            python3
+
+      - name: Install repo
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo \
+            > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Initialize TWRP
+        run: |
+          mkdir twrp
+          cd twrp
+          repo init \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b twrp-12.1
+
+      - name: Sync source
+        run: |
+          cd twrp
+          repo sync -j$(nproc --all) --force-sync --no-clone-bundle
+
+      - name: Add S7 device tree
+        run: |
+          cd twrp
+          git clone \
+            https://github.com/ananjaser1211/android_device_samsung_hero.git \
+            -b herolte \
+            device/samsung/herolte
+
+      - name: Build
+        run: |
+          cd twrp
+          export ALLOW_MISSING_DEPENDENCIES=true
+          source build/envsetup.sh
+          lunch twrp_herolte-eng
+          mka recoveryimage
+
+      - name: Upload recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-3.7.1-herolte
+          path: |
+            twrp/out/target/product/herolte/recovery.img

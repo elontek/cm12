@@ -1,0 +1,147 @@
+
+name: Build OrangeFox hero2lte
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo apt-get clean
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            git-lfs \
+            curl \
+            wget \
+            unzip \
+            zip \
+            rsync \
+            bc \
+            bison \
+            flex \
+            build-essential \
+            gcc-multilib \
+            g++-multilib \
+            libc6-dev-i386 \
+            lib32z1-dev \
+            lib32ncurses5-dev \
+            libncurses5 \
+            libxml2-utils \
+            xsltproc \
+            python3 \
+            python-is-python3 \
+            ccache
+
+      - name: Download repo tool
+        run: |
+          mkdir -p ~/bin
+          curl -L https://storage.googleapis.com/git-repo-downloads/repo \
+            -o ~/bin/repo
+          chmod +x ~/bin/repo
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Clone OrangeFox source
+        run: |
+          mkdir -p ~/orangefox
+          cd ~/orangefox
+
+          git clone --depth=1 \
+            --branch fox_9.0 \
+            https://github.com/OrangeFoxRecovery/OrangeFox.git \
+            .
+
+      - name: Clone hero2lte device tree
+        run: |
+          cd ~/orangefox
+
+          mkdir -p device/samsung
+
+          git clone --depth=1 \
+            --branch fox_9.0 \
+            https://github.com/OrangeFoxRecovery/device_samsung_hero2lte.git \
+            device/samsung/hero2lte
+
+      - name: Clone universal8890 kernel
+        run: |
+          cd ~/orangefox
+
+          mkdir -p kernel/samsung
+
+          git clone --depth=1 \
+            --branch twrp \
+            https://github.com/morogoku/android_kernel_samsung_universal8890.git \
+            kernel/samsung/universal8890
+
+      - name: Show device tree
+        run: |
+          cd ~/orangefox
+
+          echo "===== Device tree ====="
+          ls -la device/samsung/hero2lte
+
+          echo "===== Dependencies ====="
+          if [ -f device/samsung/hero2lte/omni.dependencies ]; then
+            cat device/samsung/hero2lte/omni.dependencies
+          else
+            echo "No omni.dependencies"
+          fi
+
+      - name: Prepare build environment
+        run: |
+          cd ~/orangefox
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          source build/envsetup.sh
+
+          lunch omni_hero2lte-eng
+
+      - name: Build recovery
+        run: |
+          cd ~/orangefox
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          source build/envsetup.sh
+          lunch omni_hero2lte-eng
+
+          mka recoveryimage -j$(nproc)
+
+      - name: Show output
+        if: always()
+        run: |
+          cd ~/orangefox
+
+          echo "===== BUILD OUTPUT ====="
+
+          find out/target/product/hero2lte \
+            -maxdepth 1 \
+            -type f \
+            \( \
+              -name "recovery.img" \
+              -o -name "*.zip" \
+              -o -name "*.tar" \
+            \) \
+            -print 2>/dev/null || true
+
+      - name: Upload OrangeFox
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-hero2lte
+          path: |
+            ~/orangefox/out/target/product/hero2lte/recovery.img
+            ~/orangefox/out/target/product/hero2lte/*.zip
+            ~/orangefox/out/target/product/hero2lte/*.tar
+          if-no-files-found: warn

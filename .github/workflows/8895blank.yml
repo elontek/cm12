@@ -1,0 +1,92 @@
+name: Build Exynos 8895 Kernel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build greatlte Kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            flex \
+            git \
+            libelf-dev \
+            libssl-dev \
+            python3 \
+            zip \
+            unzip
+
+      - name: Clone kernel source
+        run: |
+          git clone \
+            --depth=1 \
+            --branch sep-16.1 \
+            https://github.com/Andeveloperlab/exynos-8895.git \
+            kernel
+
+      - name: Download GCC 4.9
+        run: |
+          git clone \
+            --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            toolchain
+
+      - name: Check toolchain
+        run: |
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+
+          aarch64-linux-android-gcc --version
+          aarch64-linux-android-ld --version
+
+      - name: Configure kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE="$GITHUB_WORKSPACE/toolchain/bin/aarch64-linux-android-"
+
+          make exynos8895-greatlte_defconfig
+
+      - name: Build kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE="$GITHUB_WORKSPACE/toolchain/bin/aarch64-linux-android-"
+
+          make -j$(nproc)
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p output
+
+          cp kernel/arch/arm64/boot/Image output/ 2>/dev/null || true
+          cp kernel/arch/arm64/boot/Image.gz output/ 2>/dev/null || true
+          cp kernel/arch/arm64/boot/Image.lz4 output/ 2>/dev/null || true
+          cp kernel/System.map output/ 2>/dev/null || true
+          cp kernel/.config output/kernel.config
+
+          find kernel/arch/arm64/boot/dts \
+            -type f \
+            \( -name "*.dtb" -o -name "*.dtbo" \) \
+            -exec cp {} output/ \; 2>/dev/null || true
+
+          echo "===== BUILD OUTPUT ====="
+          ls -lah output
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: exynos8895-greatlte-kernel
+          path: output/

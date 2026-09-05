@@ -1,0 +1,100 @@
+name: Build Exynos 8895 Kernelv2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build greatlte - GCC 15
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            flex \
+            git \
+            libelf-dev \
+            libssl-dev \
+            libncurses-dev \
+            python3 \
+            gcc-15 \
+            g++-15 \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            device-tree-compiler \
+            zip \
+            unzip
+
+      - name: Check compilers
+        run: |
+          gcc-15 --version
+          aarch64-linux-gnu-gcc --version
+
+      - name: Clone kernel source
+        run: |
+          git clone \
+            --depth=1 \
+            --branch sep-16.1 \
+            https://github.com/Andeveloperlab/exynos-8895.git \
+            kernel
+
+      - name: Configure kernel
+        working-directory: kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          make exynos8895-greatlte_defconfig
+
+      - name: Build kernel
+        working-directory: kernel
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          CROSS_COMPILE: aarch64-linux-gnu-
+          CC: gcc-15
+        run: |
+          make -j$(nproc) \
+            CC=gcc-15
+
+      - name: Show output
+        if: always()
+        run: |
+          echo "===== KERNEL OUTPUT ====="
+          find kernel/arch/arm64/boot -maxdepth 3 -type f 2>/dev/null | sort
+
+          echo "===== FILES ====="
+          ls -lah kernel/arch/arm64/boot/ 2>/dev/null || true
+
+      - name: Prepare artifacts
+        if: always()
+        run: |
+          mkdir -p output
+
+          cp kernel/arch/arm64/boot/Image output/ 2>/dev/null || true
+          cp kernel/arch/arm64/boot/Image.gz output/ 2>/dev/null || true
+          cp kernel/arch/arm64/boot/Image.lz4 output/ 2>/dev/null || true
+          cp kernel/System.map output/ 2>/dev/null || true
+          cp kernel/.config output/kernel.config 2>/dev/null || true
+
+          find kernel/arch/arm64/boot/dts \
+            -type f \
+            \( -name "*.dtb" -o -name "*.dtbo" \) \
+            -exec cp {} output/ \; 2>/dev/null || true
+
+      - name: Upload kernel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exynos8895-greatlte-gcc15
+          path: output/

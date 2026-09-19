@@ -1,0 +1,109 @@
+name: OrangeFox 7.1 - SM-T113 (goyave)
+
+on:
+  workflow_dispatch:
+
+env:
+  DEVICE: goyave
+  LUNCH_TARGET: omni_goyave-eng
+
+  # Device tree (TWRP android-7.1 dalı)
+  DEVICE_TREE_URL: https://github.com/TeamWin/android_device_samsung_goyave
+  DEVICE_TREE_BRANCH: android-7.1
+  DEVICE_PATH: device/samsung/goyave
+
+  # omni.dependencies dosyasında istenen common tree
+  COMMON_TREE_URL: https://github.com/samsung-sc8830/twrp_device_samsung_sc8830-common
+  COMMON_TREE_BRANCH: android-7.1
+  COMMON_PATH: device/samsung/sc8830-common
+
+  # Resmi OrangeFox sync scripti 7.1 desteğini Aralık 2022'de kaldırdı.
+  # Bu tarihten önceki son sürümü kullanıyoruz.
+  SYNC_CUTOFF: "2022-12-05"
+
+  FOX_DIR: /home/runner/fox_7.1
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Disk alanı aç
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Host araçlarını kur (repo, git)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl python3 patch
+          mkdir -p "$HOME/bin"
+          curl -sSL https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git config --global color.ui false
+
+      - name: OrangeFox 7.1 kaynaklarını senkronize et
+        run: |
+          mkdir -p "$HOME/fox_sync" && cd "$HOME/fox_sync"
+          git clone https://gitlab.com/OrangeFox/sync.git
+          cd sync
+          git checkout "$(git rev-list -n 1 --before="$SYNC_CUTOFF" HEAD)"
+          ls patches/ | grep 7.1 || { echo "7.1 patch dosyası yok!"; exit 1; }
+          ./orangefox_sync.sh --branch 7.1 --path "$FOX_DIR"
+
+      - name: Device tree'leri klonla
+        run: |
+          cd "$FOX_DIR"
+          git clone --depth=1 -b "$DEVICE_TREE_BRANCH" "$DEVICE_TREE_URL" "$DEVICE_PATH"
+          git clone --depth=1 -b "$COMMON_TREE_BRANCH" "$COMMON_TREE_URL" "$COMMON_PATH"
+
+      - name: Derleme scriptini hazırla
+        run: |
+          cat > "$HOME/build_in_container.sh" <<'EOF'
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y git-core gnupg flex bison gperf build-essential zip curl \
+            zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev \
+            x11proto-core-dev libx11-dev lib32z-dev libgl1-mesa-dev libxml2-utils \
+            xsltproc unzip python openjdk-8-jdk bc lzop libssl-dev rsync cpio file \
+            libncurses5 imagemagick
+          cd /fox
+          export LC_ALL=C
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export FOX_BUILD_DEVICE="$DEVICE"
+          set +e
+          source build/envsetup.sh
+          set -e
+          lunch "$LUNCH_TARGET"
+          mka adbd recoveryimage
+          EOF
+
+      - name: Derle (Ubuntu 18.04 container içinde)
+        run: |
+          docker run --rm \
+            -v "$FOX_DIR":/fox \
+            -v "$HOME/build_in_container.sh":/build.sh:ro \
+            -e DEVICE -e LUNCH_TARGET \
+            ubuntu:18.04 bash /build.sh
+
+      - name: Çıktıları kontrol et
+        run: |
+          ls -lh "$FOX_DIR/out/target/product/$DEVICE/" | head -50
+          test -f "$FOX_DIR/out/target/product/$DEVICE/recovery.img"
+
+      - name: Artifact yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-7.1-${{ env.DEVICE }}
+          path: |
+            /home/runner/fox_7.1/out/target/product/goyave/recovery.img
+            /home/runner/fox_7.1/out/target/product/goyave/OrangeFox*.zip
+          if-no-files-found: warn
+          

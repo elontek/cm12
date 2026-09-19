@@ -1,0 +1,170 @@
+name: OrangeFox 7.1 - Samsung T113
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            git-lfs \
+            gnupg \
+            flex \
+            bison \
+            build-essential \
+            zip \
+            curl \
+            zlib1g-dev \
+            gcc-multilib \
+            g++-multilib \
+            libc6-dev-i386 \
+            lib32ncurses5-dev \
+            x11proto-core-dev \
+            libx11-dev \
+            lib32z1-dev \
+            libgl1-mesa-dev \
+            libxml2-utils \
+            xsltproc \
+            unzip \
+            python3 \
+            python-is-python3 \
+            rsync \
+            bc \
+            cpio \
+            libssl-dev \
+            libncurses5 \
+            libncurses5-dev \
+            lzop \
+            pngcrush \
+            schedtool \
+            squashfs-tools \
+            simg2img \
+            img2simg \
+            e2fsprogs
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Install repo
+        run: |
+          mkdir -p "$HOME/bin"
+
+          curl -L \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+
+          chmod +x "$HOME/bin/repo"
+
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+          "$HOME/bin/repo" --version
+
+      - name: Clone OrangeFox sync
+        run: |
+          git clone --depth=1 \
+            https://gitlab.com/OrangeFox/sync.git \
+            orangefox-sync
+
+      - name: Initialize OrangeFox 7.1
+        run: |
+          cd orangefox-sync
+
+          ./orangefox_sync.sh \
+            --branch 7.1 \
+            --path "$GITHUB_WORKSPACE/fox"
+
+      - name: Add T113 device tree
+        run: |
+          cd "$GITHUB_WORKSPACE/fox"
+
+          git clone \
+            --depth=1 \
+            --branch android-7.1 \
+            https://github.com/TeamWin/android_device_samsung_goyave.git \
+            device/samsung/goyave
+
+      - name: Resolve device dependencies
+        run: |
+          cd "$GITHUB_WORKSPACE/fox"
+
+          if [ -f device/samsung/goyave/omni.dependencies ]; then
+            cat device/samsung/goyave/omni.dependencies
+            repo sync -j2 --force-sync
+          fi
+
+      - name: Check device tree
+        run: |
+          cd "$GITHUB_WORKSPACE/fox"
+
+          echo "===== GOYAVE TREE ====="
+          ls -la device/samsung/goyave
+
+          echo
+          echo "===== COMMON TREE ====="
+
+          if [ -d device/samsung/sc8830-common ]; then
+            ls -la device/samsung/sc8830-common
+          else
+            echo "sc8830-common not found"
+          fi
+
+      - name: Setup build environment
+        run: |
+          cd "$GITHUB_WORKSPACE/fox"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          source build/envsetup.sh
+
+          lunch omni_goyave-eng
+
+      - name: Build OrangeFox 7.1
+        run: |
+          cd "$GITHUB_WORKSPACE/fox"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+
+          source build/envsetup.sh
+
+          lunch omni_goyave-eng
+
+          mka recoveryimage -j2
+
+      - name: Show output
+        if: always()
+        run: |
+          echo "===== OUTPUT ====="
+
+          if [ -d "$GITHUB_WORKSPACE/fox/out/target/product/goyave" ]; then
+            find "$GITHUB_WORKSPACE/fox/out/target/product/goyave" \
+              -maxdepth 1 \
+              -type f \
+              -printf '%f\n' \
+              | sort
+          else
+            echo "Build output not found."
+          fi
+
+      - name: Upload recovery
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-7.1-T113
+          path: |
+            fox/out/target/product/goyave/recovery.img
+            fox/out/target/product/goyave/recovery.tar
+            fox/out/target/product/goyave/*.zip
+          if-no-files-found: warn

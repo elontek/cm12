@@ -1,0 +1,86 @@
+name: Build zerolte kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: "Kernel repo"
+        default: "https://github.com/Haldexx/android_kernel_samsung_universal7420"
+      kernel_branch:
+        description: "Kernel branch"
+        default: "lineage-23.2"
+      defconfig:
+        description: "Defconfig"
+        default: "exynos7420-zerolte_defconfig"
+      toolchain:
+        description: "Compiler (gcc49 = aarch64-linux-android-4.9, clang = apt clang-14 + gcc49 binutils)"
+        type: choice
+        options:
+          - gcc49
+          - clang
+        default: gcc49
+      gcc_repo:
+        description: "gcc 4.9 prebuilt repo"
+        default: "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9"
+      gcc_branch:
+        description: "gcc 4.9 prebuilt branch"
+        default: "lineage-19.1"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
+            device-tree-compiler cpio zip xz-utils ccache python3 \
+            build-essential git
+          if [ "${{ inputs.toolchain }}" = "clang" ]; then
+            sudo apt-get install -y clang-14 lld-14
+            sudo ln -sf /usr/bin/clang-14 /usr/local/bin/clang
+          fi
+
+      - name: Fetch toolchain
+        run: |
+          git clone --depth=1 -b "${{ inputs.gcc_branch }}" "${{ inputs.gcc_repo }}" "$HOME/gcc"
+          "$HOME/gcc/bin/aarch64-linux-android-gcc" --version | head -1
+
+      - name: Fetch kernel
+        run: |
+          git clone --depth=1 -b "${{ inputs.kernel_branch }}" "${{ inputs.kernel_repo }}" kernel
+          git -C kernel log -1 --oneline
+
+      - name: Configure and build
+        run: |
+          ARGS=(
+            ARCH=arm64
+            O="$PWD/out"
+            CROSS_COMPILE="$HOME/gcc/bin/aarch64-linux-android-"
+            # gcc>=10 host tools (dtc) need -fcommon on 3.10 kernels
+            HOSTCFLAGS="-Wall -O2 -fomit-frame-pointer -std=gnu89 -fcommon"
+          )
+          if [ "${{ inputs.toolchain }}" = "clang" ]; then
+            ARGS+=(CC=clang CLANG_TRIPLE=aarch64-linux-gnu-)
+          fi
+
+          make -C kernel "${ARGS[@]}" "${{ inputs.defconfig }}"
+          make -C kernel "${ARGS[@]}" -j"$(nproc)" Image 2>&1 | tee build.log
+          make -C kernel "${ARGS[@]}" -j"$(nproc)" dtbs 2>&1 | tee -a build.log || true
+
+      - name: Collect output
+        if: always()
+        run: |
+          mkdir -p dist
+          cp out/arch/arm64/boot/Image dist/ 2>/dev/null || true
+          cp out/.config dist/config 2>/dev/null || true
+          cp build.log dist/ 2>/dev/null || true
+          find out/arch/arm64/boot -name '*.dtb' -exec cp {} dist/ \; 2>/dev/null || true
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zerolte-kernel
+          path: dist/

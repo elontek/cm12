@@ -1,0 +1,113 @@
+name: Build zeroflte kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: "Kernel repo"
+        default: "https://github.com/Haldexx/android_kernel_samsung_universal7420"
+      kernel_branch:
+        description: "Kernel branch"
+        default: "lineage-23.2"
+      defconfig:
+        description: "Defconfig"
+        default: "exynos7420-zeroflte_defconfig"
+      disable_ksu:
+        description: "Disable KernelSU (CONFIG_KSU) for a clean first boot test"
+        type: boolean
+        default: false
+      toolchain_url:
+        description: "Optional toolchain tarball URL (leave empty to use apt gcc-9)"
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev \
+            device-tree-compiler cpio zip xz-utils python3 build-essential git curl
+
+      - name: Fetch toolchain
+        run: |
+          mkdir -p "$HOME/tc"
+          URL="${{ inputs.toolchain_url }}"
+          if [ -n "$URL" ] && curl -fL --retry 3 "$URL" -o tc.tar.xz && tar -tf tc.tar.xz > /dev/null 2>&1; then
+            tar -xf tc.tar.xz -C "$HOME/tc" --strip-components=1
+            B="$(ls "$HOME"/tc/bin/*-gcc | head -1)"
+            echo "CROSS=${B%gcc}" >> "$GITHUB_ENV"
+            echo "CCBIN=$B" >> "$GITHUB_ENV"
+          else
+            [ -n "$URL" ] && echo "Download invalid, falling back to apt gcc-9"
+            sudo apt-get install -y gcc-9-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            echo "CROSS=aarch64-linux-gnu-" >> "$GITHUB_ENV"
+            echo "CCBIN=aarch64-linux-gnu-gcc-9" >> "$GITHUB_ENV"
+          fi
+          "$(grep CCBIN "$GITHUB_ENV" | cut -d= -f2)" --version | head -1
+
+      - name: Link toolchain to the path the kernel Makefile hardcodes
+        run: |
+          # kernel expects <workspace>/kernel/../../../prebuilts/linaro/linux-x86/aarch64
+          TARGET="$(realpath -m "$GITHUB_WORKSPACE/kernel/../../../prebuilts/linaro/linux-x86")"
+          mkdir -p "$TARGET"
+          if [ -d "$HOME/tc/bin" ]; then
+            ln -sfn "$HOME/tc" "$TARGET/aarch64"
+          else
+            mkdir -p "$TARGET/aarch64/bin"
+            ln -sf "$(command -v ${CCBIN})" "$TARGET/aarch64/bin/aarch64-linux-gnu-gcc"
+            for t in ar as ld nm objcopy objdump strip; do
+              ln -sf "$(command -v aarch64-linux-gnu-$t)" "$TARGET/aarch64/bin/aarch64-linux-gnu-$t"
+            done
+          fi
+          ls "$TARGET/aarch64/bin" | head
+
+      - name: Fetch kernel
+        run: |
+          git clone --depth=1 -b "${{ inputs.kernel_branch }}" "${{ inputs.kernel_repo }}" kernel
+          git -C kernel log -1 --oneline
+          # modern host gcc: fix dtc "multiple definition of yylloc"
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' \
+            kernel/scripts/dtc/dtc-lexer.lex.c_shipped 2>/dev/null || true
+
+      - name: Build
+        run: |
+          set -o pipefail
+          ARGS=(
+            ARCH=arm64
+            O="$PWD/out"
+            CROSS_COMPILE="$CROSS"
+            CC="$CCBIN"
+            HOSTCFLAGS="-Wall -O2 -fomit-frame-pointer -std=gnu89 -fcommon"
+          )
+          if [ ! -f "kernel/arch/arm64/configs/${{ inputs.defconfig }}" ]; then
+            echo "::error::Defconfig not found on this branch. Available candidates:"
+            ls kernel/arch/arm64/configs | grep -i -E 'zero|7420|lineage|noble' || ls kernel/arch/arm64/configs
+            exit 1
+          fi
+          make -C kernel "${ARGS[@]}" "${{ inputs.defconfig }}"
+          if [ "${{ inputs.disable_ksu }}" = "true" ]; then
+            kernel/scripts/config --file out/.config -d KSU || true
+            make -C kernel "${ARGS[@]}" olddefconfig
+            grep -E "CONFIG_KSU" out/.config || echo "KSU disabled"
+          fi
+          make -C kernel "${ARGS[@]}" -j"$(nproc)" Image 2>&1 | tee build.log
+          make -C kernel "${ARGS[@]}" -j"$(nproc)" dtbs 2>&1 | tee -a build.log || true
+
+      - name: Collect output
+        if: always()
+        run: |
+          mkdir -p dist
+          cp out/arch/arm64/boot/Image dist/ 2>/dev/null || true
+          cp out/.config dist/config 2>/dev/null || true
+          cp build.log dist/ 2>/dev/null || true
+          find out/arch/arm64/boot -name '*.dtb' -exec cp {} dist/ \; 2>/dev/null || true
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zeroflte-kernel
+          path: dist/

@@ -1,4 +1,4 @@
-name: Build zeroflte kernel
+name: Build zenlte kernel
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
         default: "lineage-23.2"
       defconfig:
         description: "Defconfig"
-        default: "exynos7420-zeroflte_defconfig"
+        default: "exynos7420-zenlte_defconfig"
       disable_ksu:
         description: "Disable KernelSU (CONFIG_KSU) for a clean first boot test"
         type: boolean
@@ -84,7 +84,7 @@ jobs:
           )
           if [ ! -f "kernel/arch/arm64/configs/${{ inputs.defconfig }}" ]; then
             echo "::error::Defconfig not found on this branch. Available candidates:"
-            ls kernel/arch/arm64/configs | grep -i -E 'zero|7420|lineage|noble' || ls kernel/arch/arm64/configs
+            ls kernel/arch/arm64/configs | grep -i -E 'zero|zen|7420|lineage|noble' || ls kernel/arch/arm64/configs
             exit 1
           fi
           make -C kernel "${ARGS[@]}" "${{ inputs.defconfig }}"
@@ -109,5 +109,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: zeroflte-kernel
+          name: zenlte-kernel
           path: dist/

@@ -1,0 +1,56 @@
+name: Build Kernel (Xperia Z2 sirius)
+
+on:
+  workflow_dispatch:
+
+env:
+  KERNEL_REPO: https://github.com/sony-togari-dev/android_kernel_sony_msm8974
+  KERNEL_BRANCH: lineage-19.1
+  DEFCONFIG: lineageos_shinano_sirius_defconfig
+  ARCH: arm
+  CROSS_COMPILE: arm-linux-androideabi-
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Bağımlılıkları kur
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git bc bison flex libssl-dev libncurses-dev \
+            build-essential u-boot-tools device-tree-compiler lzop cpio perl python3
+
+      - name: Kernel kaynağını indir
+        run: git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+
+      - name: Eski GCC 4.9 toolchain indir (3.4 kernel için gerekli)
+        run: |
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 \
+            toolchain
+          echo "$GITHUB_WORKSPACE/toolchain/bin" >> "$GITHUB_PATH"
+
+      - name: Derle
+        working-directory: kernel
+        run: |
+          set -o pipefail
+          export KCFLAGS="-Wno-error"
+          export HOSTCFLAGS="-fcommon -Wno-error"
+          make O=out $DEFCONFIG
+          make O=out -j"$(nproc)" zImage dtbs 2>&1 | tee build.log
+
+      - name: Çıktıları topla
+        if: always()
+        run: |
+          mkdir -p dist
+          cp kernel/out/arch/arm/boot/zImage* dist/ 2>/dev/null || true
+          cp kernel/out/arch/arm/boot/*.dtb dist/ 2>/dev/null || true
+          cp kernel/out/.config dist/config 2>/dev/null || true
+          cp kernel/build.log dist/ 2>/dev/null || true
+
+      - name: Artifact yükle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sirius-kernel
+          path: dist/

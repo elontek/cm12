@@ -1,0 +1,58 @@
+name: Build greatlte kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Kernel repo"
+        default: "8890q/android_kernel_samsung_universal8895"
+      branch:
+        description: "Branch"
+        default: "lineage-21-rel"
+      defconfig:
+        description: "Defconfig"
+        default: "exynos8895-greatlte_defconfig"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libncurses-dev \
+            build-essential git python3 cpio zip
+
+      - name: Clone kernel
+        run: |
+          git clone --depth=1 -b "${{ inputs.branch }}" \
+            "https://github.com/${{ inputs.repo }}" kernel
+
+      - name: Clone toolchain (Proton Clang)
+        run: |
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang toolchain
+
+      - name: Build
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          export ARCH=arm64 SUBARCH=arm64
+          export KBUILD_BUILD_USER=github KBUILD_BUILD_HOST=actions
+          ARGS="O=out CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          make $ARGS "${{ inputs.defconfig }}"
+          make $ARGS -j$(nproc) 2>&1 | tee build.log
+
+      - name: Collect output
+        if: always()
+        run: |
+          mkdir -p dist
+          cp kernel/build.log dist/ || true
+          cp kernel/out/arch/arm64/boot/Image* dist/ || true
+          find kernel/out/arch/arm64/boot/dts -name "*.dtb" -exec cp {} dist/ \; || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: greatlte-kernel
+          path: dist/

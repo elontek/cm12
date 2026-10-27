@@ -1,0 +1,115 @@
+name: Build S6 Edge kernel (3.10, exynos7420)
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Kernel reposu"
+        default: "https://github.com/enesuzun2002/android_kernel_samsung_exynos7420"
+      branch:
+        description: "Branch"
+        default: "nx-9.0"
+      defconfig:
+        description: "defconfig (bos birakirsan otomatik bulunur, ornek: exynos7420-zerolte_defconfig)"
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Bagimliliklari kur
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev make gcc git cpio xz-utils \
+            python3 perl device-tree-compiler ccache zip
+
+      - name: Toolchain indir (GCC 4.9 aarch64, 3.10 kernel icin gerekli)
+        run: |
+          git clone --depth=1 -b lineage-19.1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 "$HOME/gcc"
+          "$HOME/gcc/bin/aarch64-linux-android-gcc" --version | head -1
+
+      - name: Kernel kaynagini indir
+        run: |
+          git clone --depth=1 -b "${{ inputs.branch }}" "${{ inputs.repo }}" kernel
+          grep -E "^(VERSION|PATCHLEVEL|SUBLEVEL)" kernel/Makefile | head -3
+
+      - name: Eski kernelin bekledigi toolchain yolunu hazirla
+        working-directory: kernel
+        run: |
+          set -euxo pipefail
+          TOOLBIN="$HOME/gcc/bin"
+          # Kernel Makefile'in aradigi yol, kernel dizinine gore uc seviye yukaridadir.
+          EXPECTED="$(realpath -m "$PWD/../../../prebuilts/linaro/linux-x86/aarch64/bin")"
+          echo "Toolchain kaynak dizini: $TOOLBIN"
+          echo "Kernelin bekledigi dizin: $EXPECTED"
+          test -x "$TOOLBIN/aarch64-linux-android-gcc"
+          mkdir -p "$EXPECTED"
+
+          # GCC ve ilgili binutils isimlerini eski kernelin bekledigi ada esle.
+          for tool in gcc g++ cpp ld as ar nm objcopy objdump strip ranlib readelf size strings; do
+            source="$TOOLBIN/aarch64-linux-android-$tool"
+            target="$EXPECTED/aarch64-linux-gnu-$tool"
+            if [ -x "$source" ]; then
+              ln -sfn "$source" "$target"
+            fi
+          done
+
+          ls -la "$EXPECTED"
+          test -x "$EXPECTED/aarch64-linux-gnu-gcc"
+          "$EXPECTED/aarch64-linux-gnu-gcc" --version | head -1
+
+      - name: defconfig sec
+        working-directory: kernel
+        run: |
+          DEF="${{ inputs.defconfig }}"
+          if [ -z "$DEF" ]; then
+            DEF=$(ls arch/arm64/configs | grep -i -E "zerolte|zero_|7420" | head -1 || true)
+          fi
+          if [ -z "$DEF" ] || [ ! -f "arch/arm64/configs/$DEF" ]; then
+            echo "defconfig bulunamadi. Mevcut olanlar:"; ls arch/arm64/configs; exit 1
+          fi
+          echo "DEFCONFIG=$DEF" >> "$GITHUB_ENV"; echo "Kullanilan: $DEF"
+
+      - name: Yeni host araclari icin yamalar (3.10 eski)
+        working-directory: kernel
+        run: |
+          # dtc: "multiple definition of yylloc"
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' scripts/dtc/dtc-lexer.lex.c_shipped 2>/dev/null || true
+          # yeni perl: defined(@array) hatasi
+          [ -f kernel/timeconst.pl ] && sed -i 's/!defined(@val)/!@val/' kernel/timeconst.pl || true
+
+      - name: Derle
+        working-directory: kernel
+        run: |
+          export ARCH=arm64 SUBARCH=arm64
+          export CROSS_COMPILE="$HOME/gcc/bin/aarch64-linux-android-"
+          export CC="${CROSS_COMPILE}gcc"
+          export HOSTCC="gcc -fcommon"
+          EXPECTED="$(realpath -m "$PWD/../../../prebuilts/linaro/linux-x86/aarch64/bin")"
+          export CC="$EXPECTED/aarch64-linux-gnu-gcc"
+          test -x "$CC"
+          echo "CC=$CC"
+          "$CC" --version | head -1
+          mkdir -p ../out
+          make O=../out "$DEFCONFIG"
+          echo "--- Treble/Android icin onemli config'ler:"
+          grep -E "CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDER_DEVICES|SECURITY_SELINUX|CGROUP_SCHED|CPUSETS|NAMESPACES|IKCONFIG)[= ]" ../out/.config || true
+          make O=../out -j"$(nproc)" Image dtbs 2>&1 | tee ../build.log
+
+      - name: Ciktilari topla
+        if: always()
+        run: |
+          mkdir -p artifact
+          cp out/arch/arm64/boot/Image* artifact/ 2>/dev/null || true
+          find out/arch/arm64/boot -name '*.dtb' -exec cp {} artifact/ \; 2>/dev/null || true
+          cp out/.config artifact/config 2>/dev/null || true
+          cp build.log artifact/ 2>/dev/null || true
+          ls -la artifact
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: s6edge-kernel
+          path: artifact/

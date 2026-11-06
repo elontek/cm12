@@ -1,0 +1,75 @@
+name: Build Kernel 3.4 (msm8930 serrano_eur_3g)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_defconfig:
+        description: "Temel defconfig"
+        default: "msm8930_serrano_defconfig"
+      variant_defconfig:
+        description: "Varyant fragment (boş bırakırsan sadece base derlenir)"
+        default: "msm8930_serrano_eur_3g_defconfig"
+
+env:
+  KERNEL_REPO: https://github.com/SherifMoShalaby/android_kernel_samsung_msm8930-common
+  KERNEL_BRANCH: lineage-21
+  TOOLCHAIN_REPO: https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9
+  TOOLCHAIN_BRANCH: lineage-19.1
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Bağımlılıkları kur
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential libssl-dev libncurses-dev \
+            gcc-9 g++-9 git zip cpio xz-utils lz4 device-tree-compiler
+
+      - name: Kernel kaynağını çek
+        run: git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+
+      - name: Toolchain çek (GCC 4.9)
+        run: git clone --depth=1 -b "$TOOLCHAIN_BRANCH" "$TOOLCHAIN_REPO" toolchain
+
+      - name: .config oluştur (base + varyant birleştir)
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          MK="make O=out ARCH=arm HOSTCC=gcc-9 HOSTCXX=g++-9 CROSS_COMPILE=arm-linux-androideabi-"
+          $MK "${{ inputs.base_defconfig }}"
+          if [ -n "${{ inputs.variant_defconfig }}" ]; then
+            cat "arch/arm/configs/${{ inputs.variant_defconfig }}" >> out/.config
+            yes "" | $MK oldconfig
+          fi
+          grep -E "CONFIG_MACH_SERRANO" out/.config
+
+      - name: Derle
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          export KBUILD_BUILD_USER=github
+          export KBUILD_BUILD_HOST=actions
+          make O=out ARCH=arm HOSTCC=gcc-9 HOSTCXX=g++-9 \
+            CROSS_COMPILE=arm-linux-androideabi- \
+            -j"$(nproc)" zImage modules 2>&1 | tee build.log
+          ls -lh out/arch/arm/boot/
+
+      - name: Çıktıları topla
+        working-directory: kernel
+        run: |
+          mkdir -p ../artifacts/modules
+          cp out/arch/arm/boot/zImage ../artifacts/
+          find out -name "*.ko" -exec cp {} ../artifacts/modules/ \;
+          cp out/.config ../artifacts/config
+          cp build.log ../artifacts/
+
+      - name: Artifact yükle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-serrano_eur_3g
+          path: artifacts/

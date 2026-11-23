@@ -1,0 +1,82 @@
+name: Build trelte kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Kernel repo"
+        default: "programista-zacny/android_kernel_samsung_universal5433"
+      branch:
+        description: "Branch"
+        default: "lineage-24.0"
+      defconfig:
+        description: "Defconfig"
+        default: "lineage_trelte_defconfig"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libncurses-dev \
+            libelf-dev u-boot-tools device-tree-compiler lz4 xz-utils \
+            python3 git ccache cpio
+
+      - name: Clone kernel source
+        run: |
+          git clone --depth=1 \
+            -b "${{ inputs.branch }}" \
+            "https://github.com/${{ inputs.repo }}" kernel
+
+      - name: Clone GCC 4.9 toolchain (32-bit ARM)
+        run: |
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+            toolchain
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-trelte-${{ github.run_id }}
+          restore-keys: ccache-trelte-
+
+      - name: Build
+        working-directory: kernel
+        env:
+          ARCH: arm
+          SUBARCH: arm
+          CROSS_COMPILE: ${{ github.workspace }}/toolchain/bin/arm-linux-androideabi-
+          CCACHE_DIR: ~/.ccache
+        run: |
+          export PATH="${{ github.workspace }}/toolchain/bin:$PATH"
+          export KBUILD_BUILD_USER=github
+          export KBUILD_BUILD_HOST=actions
+          # Eski 3.10 hostprogs yeni host gcc ile derlenebilsin diye -fcommon
+          export HOSTCFLAGS="-fcommon"
+
+          mkdir -p out
+          make O=out ${{ inputs.defconfig }}
+          make O=out -j"$(nproc)" HOSTCFLAGS="$HOSTCFLAGS" zImage dtbs 2>&1 | tee build.log
+
+      - name: Collect outputs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          cp kernel/out/arch/arm/boot/zImage artifacts/ 2>/dev/null || true
+          cp kernel/out/.config artifacts/config 2>/dev/null || true
+          cp kernel/build.log artifacts/ 2>/dev/null || true
+          find kernel/out/arch/arm/boot/dts -name '*.dtb' -exec cp {} artifacts/ \; 2>/dev/null || true
+          ls -lh artifacts
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trelte-kernel
+          path: artifacts/

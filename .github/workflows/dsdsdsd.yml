@@ -2,8 +2,6 @@ name: Build Kernel (j5y17lte)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 env:
   KERNEL_REPO: https://github.com/Andeveloperlab/Revival-kernel
@@ -23,7 +21,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             bc bison flex libssl-dev libelf-dev build-essential \
             git ccache cpio zip device-tree-compiler python3 \
-            gcc-aarch64-linux-gnu
+            lz4 xz-utils
 
       - name: Kernel kaynağını çek
         run: |
@@ -32,8 +30,10 @@ jobs:
       - name: Toolchain indir (GCC 4.9 aarch64)
         run: |
           git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 \
             toolchain
+          ls toolchain/bin | head
+          test -x toolchain/bin/aarch64-linux-android-gcc
 
       - name: ccache
         uses: actions/cache@v4
@@ -48,10 +48,16 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
           export CROSS_COMPILE=aarch64-linux-android-
           export CCACHE_DIR=~/.ccache
+          export ANDROID_MAJOR_VERSION=p
+
+          which aarch64-linux-android-gcc
+          aarch64-linux-android-gcc --version
+
           mkdir -p out
-          make O=out ARCH=arm64 $DEFCONFIG
-          make O=out ARCH=arm64 -j$(nproc) \
-            CC="ccache ${CROSS_COMPILE}gcc" 2>&1 | tee build.log
+          make O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE $DEFCONFIG
+          make O=out ARCH=arm64 CROSS_COMPILE=$CROSS_COMPILE \
+            CC="ccache ${CROSS_COMPILE}gcc" \
+            -j$(nproc) 2>&1 | tee build.log
 
       - name: Çıktıları topla
         if: always()
@@ -60,6 +66,7 @@ jobs:
           cp kernel/build.log artifacts/ || true
           cp kernel/out/arch/arm64/boot/Image* artifacts/ || true
           cp kernel/out/arch/arm64/boot/dts/exynos/*.dtb artifacts/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/dts/*.dtb artifacts/ 2>/dev/null || true
           cp kernel/out/.config artifacts/config || true
 
       - name: Artifact yükle

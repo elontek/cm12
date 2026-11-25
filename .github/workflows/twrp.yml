@@ -7,6 +7,22 @@ on:
         description: "TWRP manifest dalı (boşsa sırayla twrp-8.1, twrp-9.0, twrp-7.1 denenir)"
         required: false
         default: ""
+      kernel_zimage_url:
+        description: "Hazır kernel zImage doğrudan indirme linki (prebuilt/zImage olarak konur)"
+        required: false
+        default: ""
+      kernel_dtimg_url:
+        description: "Varsa dt.img doğrudan indirme linki (prebuilt/dt.img olarak konur)"
+        required: false
+        default: ""
+      kernel_repo:
+        description: "Alternatif: kernel kaynak repo URL'si (kernel/samsung/a5ultexx'e klonlanır)"
+        required: false
+        default: ""
+      kernel_branch:
+        description: "kernel_repo için dal"
+        required: false
+        default: ""
 
 env:
   DEVICE_REPO: https://github.com/Galaxy-A5-Development/device_samsung_a5ultexx-twrp.git
@@ -40,9 +56,12 @@ jobs:
           sudo apt-get install -y openjdk-8-jdk python2 git git-core gnupg flex bison build-essential \
             zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 libncurses5 lib32ncurses-dev \
             x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip \
-            fontconfig bc ccache rsync lzop libssl-dev
+            fontconfig bc ccache rsync lzop libssl-dev git-lfs
           sudo update-alternatives --set java /usr/lib/jvm/java-8-openjdk-amd64/bin/java || true
           sudo update-alternatives --set javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac || true
+          # Runner'ın varsayılan JAVA_HOME'u (Temurin 11) yerine Java 8'i zorla
+          echo "JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> "$GITHUB_ENV"
+          echo "/usr/lib/jvm/java-8-openjdk-amd64/bin" >> "$GITHUB_PATH"
           sudo ln -sf /usr/bin/python2 /usr/bin/python
           mkdir -p ~/bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
@@ -85,6 +104,61 @@ jobs:
           echo "=== AndroidProducts.mk ==="
           cat "$DEVICE_PATH/AndroidProducts.mk" || true
 
+      - name: Kernel hazırla
+        run: |
+          cd "$WORKDIR/$DEVICE_PATH"
+          echo "=== BoardConfig kernel/prebuilt satırları ==="
+          grep -rnE "KERNEL|PREBUILT|DT_IMAGE|dt\.img|zImage" BoardConfig*.mk *.mk 2>/dev/null | head -40 || true
+          echo "=== prebuilt klasörü ==="
+          ls -la prebuilt 2>/dev/null || echo "prebuilt klasörü yok"
+          mkdir -p prebuilt
+
+          if [ -n "${{ github.event.inputs.kernel_zimage_url }}" ]; then
+            curl -L --fail -o prebuilt/zImage "${{ github.event.inputs.kernel_zimage_url }}"
+          fi
+          if [ -n "${{ github.event.inputs.kernel_dtimg_url }}" ]; then
+            curl -L --fail -o prebuilt/dt.img "${{ github.event.inputs.kernel_dtimg_url }}"
+          fi
+          if [ -n "${{ github.event.inputs.kernel_repo }}" ]; then
+            BR="${{ github.event.inputs.kernel_branch }}"
+            if [ -n "$BR" ]; then
+              git clone --depth=1 -b "$BR" "${{ github.event.inputs.kernel_repo }}" "$WORKDIR/kernel/samsung/a5ultexx"
+            else
+              git clone --depth=1 "${{ github.event.inputs.kernel_repo }}" "$WORKDIR/kernel/samsung/a5ultexx"
+            fi
+          fi
+
+          # Device tree'nin kendi prebuilt dosyaları farklı adda olabilir: zImage'e eşle
+          if [ ! -s prebuilt/zImage ]; then
+            for C in kernel Image zImage-dtb Image.gz-dtb Image.gz zImage.bin kernel.img; do
+              if [ -s "prebuilt/$C" ]; then
+                echo "prebuilt/$C -> prebuilt/zImage olarak kopyalanıyor"
+                cp "prebuilt/$C" prebuilt/zImage
+                break
+              fi
+            done
+          fi
+          if [ ! -s prebuilt/dt.img ]; then
+            for C in dtb dt dtb.img dt.bin; do
+              if [ -s "prebuilt/$C" ]; then
+                echo "prebuilt/$C -> prebuilt/dt.img olarak kopyalanıyor"
+                cp "prebuilt/$C" prebuilt/dt.img
+                break
+              fi
+            done
+          fi
+          # Git LFS işaretçisi mi (gerçek dosya yerine küçük metin)?
+          for F in prebuilt/zImage prebuilt/dt.img; do
+            [ -f "$F" ] && head -c 60 "$F" | grep -q "git-lfs" && { echo "UYARI: $F bir Git LFS işaretçisi"; (git lfs install && git lfs pull) || true; }
+          done
+
+          if [ ! -s prebuilt/zImage ] && [ ! -d "$WORKDIR/kernel/samsung/a5ultexx" ]; then
+            echo "HATA: Kernel yok. Device tree'de prebuilt/zImage bulunmuyor."
+            echo "Workflow'u çalıştırırken kernel_zimage_url (ve gerekirse kernel_dtimg_url) ya da kernel_repo gir."
+            exit 1
+          fi
+          ls -la prebuilt || true
+
       - name: Lunch hedefini bul
         id: lunch
         run: |
@@ -102,6 +176,10 @@ jobs:
       - name: Derle
         run: |
           cd "$WORKDIR"
+          export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+          javac -version
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           export USE_CCACHE=1

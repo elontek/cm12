@@ -1,0 +1,145 @@
+name: Build TWRP a5ultexx
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_branch:
+        description: "TWRP manifest dalı (boşsa sırayla twrp-8.1, twrp-9.0, twrp-7.1 denenir)"
+        required: false
+        default: ""
+
+env:
+  DEVICE_REPO: https://github.com/Galaxy-A5-Development/device_samsung_a5ultexx-twrp.git
+  DEVICE_BRANCH: android-8.1
+  DEVICE_PATH: device/samsung/a5ultexx
+  WORKDIR: /home/runner/twrp
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    steps:
+      - name: Disk alanı aç
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo apt-get clean
+          df -h
+
+      - name: Swap ekle (bellek yetmezse)
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Bağımlılıklar
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-8-jdk python2 git git-core gnupg flex bison build-essential \
+            zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 libncurses5 lib32ncurses-dev \
+            x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip \
+            fontconfig bc ccache rsync lzop libssl-dev
+          sudo update-alternatives --set java /usr/lib/jvm/java-8-openjdk-amd64/bin/java || true
+          sudo update-alternatives --set javac /usr/lib/jvm/java-8-openjdk-amd64/bin/javac || true
+          sudo ln -sf /usr/bin/python2 /usr/bin/python
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          java -version
+          python --version
+
+      - name: Kaynak çek (TWRP minimal manifest)
+        run: |
+          set -e
+          mkdir -p "$WORKDIR" && cd "$WORKDIR"
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.com"
+          git config --global color.ui false
+
+          BRANCHES="${{ github.event.inputs.manifest_branch }}"
+          [ -z "$BRANCHES" ] && BRANCHES="twrp-8.1 twrp-9.0 twrp-7.1"
+
+          OK=""
+          for B in $BRANCHES; do
+            echo ">>> Deneniyor: $B"
+            if ~/bin/repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git -b "$B" < /dev/null; then
+              OK="$B"; break
+            fi
+          done
+          [ -z "$OK" ] && { echo "Hiçbir manifest dalı çalışmadı"; exit 1; }
+          echo "Kullanılan manifest: $OK"
+          echo "$OK" > .manifest_branch
+
+          ~/bin/repo sync -c -j4 --force-sync --no-clone-bundle --no-tags < /dev/null
+
+      - name: Device tree çek
+        run: |
+          cd "$WORKDIR"
+          rm -rf "$DEVICE_PATH"
+          git clone --depth=1 -b "$DEVICE_BRANCH" "$DEVICE_REPO" "$DEVICE_PATH"
+          echo "=== Device tree içeriği ==="
+          ls -la "$DEVICE_PATH"
+          echo "=== AndroidProducts.mk ==="
+          cat "$DEVICE_PATH/AndroidProducts.mk" || true
+
+      - name: Lunch hedefini bul
+        id: lunch
+        run: |
+          cd "$WORKDIR/$DEVICE_PATH"
+          if ls omni_*.mk >/dev/null 2>&1; then
+            NAME=$(ls omni_*.mk | head -n1 | sed 's/\.mk$//')
+          elif ls twrp_*.mk >/dev/null 2>&1; then
+            NAME=$(ls twrp_*.mk | head -n1 | sed 's/\.mk$//')
+          else
+            echo "omni_*.mk / twrp_*.mk bulunamadı"; exit 1
+          fi
+          echo "combo=${NAME}-eng" >> "$GITHUB_OUTPUT"
+          echo "Lunch: ${NAME}-eng"
+
+      - name: Derle
+        run: |
+          cd "$WORKDIR"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          export SKIP_ABI_CHECKS=true
+          set +e
+          source build/envsetup.sh
+          lunch ${{ steps.lunch.outputs.combo }}
+          mka recoveryimage -j$(nproc) 2>&1 | tee build.log
+          RC=${PIPESTATUS[0]}
+          if [ "$RC" -ne 0 ]; then
+            echo "=== HATA SATIRLARI ==="
+            grep -nE "error:|Error [0-9]|undefined reference|No such file|FAILED:|\*\*\*" build.log | head -50
+            exit $RC
+          fi
+
+      - name: Odin için tar.md5 hazırla
+        if: success()
+        run: |
+          cd "$WORKDIR/out/target/product/a5ultexx"
+          ls -la
+          tar -H ustar -c recovery.img > twrp-a5ultexx.tar
+          md5sum -t twrp-a5ultexx.tar >> twrp-a5ultexx.tar
+          mv twrp-a5ultexx.tar twrp-a5ultexx.tar.md5
+
+      - name: Build log yükle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /home/runner/twrp/build.log
+          if-no-files-found: ignore
+
+      - name: Artifact yükle
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twrp-a5ultexx
+          path: |
+            /home/runner/twrp/out/target/product/a5ultexx/recovery.img
+            /home/runner/twrp/out/target/product/a5ultexx/twrp-a5ultexx.tar.md5
